@@ -29,7 +29,7 @@ def run_fingerprinting(
 
     #Organize projection netcdf files by regions from grd fp dict
     matching_ncfiles_dict = process_ncfiles(projection_files, grd_fp_dict=grd_fp_dict)
-
+    print('matching files dict: \n', matching_ncfiles_dict)
     # Read location file
     (_, site_ids, site_lats, site_lons) = ReadLocationFile(location_file=location_file)
 
@@ -68,7 +68,7 @@ def process_ncfiles(ncfiles, grd_fp_dict):
         for region, regionvars in regions.items():
             # Initialize an empty list for this region
             matching_ncfiles_dict[region] = []
-
+            print('(in process ncfiles) REGION: ', region)
             # Loop through the ncfiles
             for ncfile in ncfiles:
                 # Open the netcdf file
