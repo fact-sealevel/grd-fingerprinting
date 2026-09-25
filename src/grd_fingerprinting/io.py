@@ -1,11 +1,11 @@
-from netCDF4 import Dataset
-import numpy as np
 import re
 import time
+
+import numpy as np
 import xarray as xr
 import yaml
 
-def read_map_file(grd_fp_map_file:str)->dict:
+def read_map_file(grd_fp_map_file: str) -> dict:
     with open(grd_fp_map_file, "r") as file:
         grd_fp_dict = yaml.safe_load(file)
 
@@ -47,20 +47,21 @@ def ReadLocationFile(location_file):
     # Return variables
     return (names, ids, lats, lons)
 
-def ReadFingerprint(fname):
-    # Open the fingerprint file
-    try:
-        nc_fid = Dataset(fname, "r")
-    except:
-        print("Cannot open fingerprint file: {0}\n".format(fname))
-        raise
+def read_gmsl_projections(projection_files):
+    # Load every GMSL projection file and stack their 'budget_term'/
+    # 'source_region' dims into a single 'combo' dimension carrying a
+    # (budget_term, source_region) MultiIndex, then concatenate along that
+    # dimension. Unlike combining along 'budget_term' and 'source_region' as
+    # two independent dimensions, this keeps the sparse budget_term/
+    # source_region pairing intact instead of expanding it into a mostly-NaN
+    # budget_term x source_region grid.
+    combo_datasets = []
+    for gmsl_file in projection_files:
+        ds = xr.open_dataset(gmsl_file).load()
+        ds.close()
+        combo_datasets.append(ds.stack(combo=("budget_term", "source_region")))
 
-    # Read in the fingerprint data
-    fp = nc_fid.variables["fp"][:, :]
-    fp_lats = nc_fid.variables["lat"][:]
-    fp_lons = nc_fid.variables["lon"][:]
-
-    return (fp, fp_lats, fp_lons)
+    return xr.concat(combo_datasets, dim="combo")
 
 
 def write_localized_projections(
@@ -70,7 +71,7 @@ def write_localized_projections(
     site_lons,
     scenario,
     baseyear,
-    ice_source,
+    budget_term,
     targyears,
     output_path,
 ):
@@ -84,7 +85,7 @@ def write_localized_projections(
         "source": "SLR Framework: emulandice2 workflow",
         "scenario": scenario,
         "baseyear": baseyear,
-        "ice_source": ice_source,
+        "budget_term": budget_term,
     }
 
     (nsamps, nyears, nregions) = rsl.shape
