@@ -27,6 +27,9 @@ def run_fingerprinting(
     # MultiIndex 'combo' dimension.
     grd_fp_dict = read_map_file(grd_fp_map_file=grd_fingerprint_map_file)
     gmsl_ds = read_gmsl_projections(projection_files)
+    check_single_budget_term(
+        gmsl_ds.indexes["combo"].get_level_values("budget_term")
+    )
 
     # Read location file
     (_, site_ids, site_lats, site_lons) = ReadLocationFile(location_file=location_file)
@@ -55,6 +58,17 @@ def run_fingerprinting(
                 targyears=targyears,
                 output_path=output_lslr_file
             )
+
+
+def check_single_budget_term(budget_terms):
+    # Each run localizes one budget term and writes it to --output-lslr-file;
+    # with more than one, each would overwrite the last.
+    found = sorted(set(budget_terms))
+    if len(found) > 1:
+        raise ValueError(
+            f"Projection files contain multiple budget terms {found}. "
+            "grd-fingerprinting must be run once per budget term."
+        )
 
 
 def find_fingerprint_file(grd_fp_dict, source_region, fingerprint_dir):
