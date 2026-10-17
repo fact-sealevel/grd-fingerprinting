@@ -29,11 +29,11 @@ Because a run adds together every source region it is given, the projection file
 |---|---|
 | Local WAIS | `wais_gslr.nc` |
 | Local EAIS | `eais_gslr.nc` |
-| Local AIS (WAIS + EAIS) | `wais_gslr.nc` and `eais_gslr.nc` |
+| Local AIS (WAIS + EAIS + PEN) | `wais_gslr.nc`, `pen_gslr.nc` and `eais_gslr.nc` |
 | Local GIS | `gis_gslr.nc` |
 | Local glaciers (all 18 RGI regions) | `glaciers_regions_gslr.nc` |
 
-To get several of these (e.g. WAIS and EAIS separately), run grd-fingerprinting once for each, with a different `--output-lslr-file`.
+To get several of these (e.g. WAIS and EAIS separately), run grd-fingerprinting once for each, with a different `--output-lslr-file`. 
 
 Two rules apply to every run:
 
@@ -74,6 +74,36 @@ uv run grd-fingerprinting \
 
 For local WAIS only, pass just `wais_gslr.nc` and change the output to e.g. `./data/output/wais_lslr.nc`.
 
+#### Example: local glaciers
+
+First, from `ipccar5/` on the `wire_in_grd` branch, run the `glaciers` command. Passing `--global-regions-output-file` (which needs `--glacier-fraction-file`) writes `glaciers_regions_gslr.nc`, the global glacier projection split into the 18 RGI regions (`source_region = rgi01 … rgi18`):
+
+```shell
+uv run ipccar5 glaciers \
+  --scenario ssp585 \
+  --nsamps 500 \
+  --climate-data-file data/input/climate.nc \
+  --glacier-fraction-file data/input/glacier_fraction.txt \
+  --global-output-file data/output/glaciers_gslr.nc \
+  --global-regions-output-file data/output/glaciers_regions_gslr.nc
+```
+
+Then, from `grd-fingerprinting/`, pass the regions file to write `glaciers_lslr.nc`:
+
+```shell
+uv run grd-fingerprinting \
+  --projection-files ../ipccar5/data/output/glaciers_regions_gslr.nc \
+  --grd-fingerprint-map-file ./data/input/mappings/ipccar5_fingerprintmap.yml \
+  --fingerprint-dir ./data/input/fingerprint/ipccar5 \
+  --location-file ./data/input/location.lst \
+  --chunksize 50 \
+  --scenario ssp585 \
+  --baseyear 2005 \
+  --output-lslr-file ./data/output/glaciers_lslr.nc
+```
+
+Only pass `glaciers_regions_gslr.nc`, not `glaciers_gslr.nc`. The latter is the global glacier total (`source_region = "global"`), which has no entry in the fingerprint map.
+
 grd-fingerprinting prints the fingerprint it selected for each source region, e.g. `wais: icesheets -> ./data/input/fingerprint/ipccar5/fprint_wais.nc`, which is a quick way to check the right fingerprints were used.
 
 The output file holds `sea_level_change` (mm) with dimensions `(samples, years, locations)`, plus each location's `lat` and `lon`, and records the run's `budget_term`, `scenario` and `baseyear` as attributes.
@@ -104,3 +134,7 @@ Attributes:
 For an example of a GMSL module writing outputs in this structure, see `make_gmsl_ds` and `write_gmsl_projection` in ipccar5's [`io.py`](https://github.com/fact-sealevel/ipccar5/blob/wire_in_grd/src/ipccar5/io.py) on the `wire_in_grd` branch. It writes one file per source region (e.g. `gis`, `wais`, `eais`) as well as a single file with a multi-valued `source_region` dimension (one entry per glacier region). Its `source_region` values are the keys in `data/input/mappings/ipccar5_fingerprintmap.yml`.
 
 To connect your own module, see [wiring_a_gmsl_module.md](wiring_a_gmsl_module.md).
+
+## Planned future changes
+
+- Support for multiple types of fingerprints: vertical land motion, geocentric sea level and relative sea level.
