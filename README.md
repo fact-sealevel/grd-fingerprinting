@@ -9,6 +9,8 @@ This is a prototype of a stand-alone gravitational, rotational and deformational
 
 > [!NOTE]
 > Currently, the only module with a working prototype for providing GMSL inputs to grd-fingerprinting is [ipccar5](https://github.com/fact-sealevel/ipccar5/tree/wire_in_grd) (`wire_in_grd` branch). Prototypes for additional modules will be released soon.
+>
+> To connect your own GMSL module, see [Wiring a GMSL module to grd-fingerprinting](wiring_a_gmsl_module.md), which walks through running ipccar5 and grd-fingerprinting locally and what your module's outputs need to look like.
 
 ## What it does
 
