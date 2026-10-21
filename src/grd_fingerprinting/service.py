@@ -2,14 +2,13 @@ from grd_fingerprinting.io import (
     read_map_file,
     ReadLocationFile,
     write_localized_projections,
-    ReadFingerprint as readfp
+    read_gmsl_projections,
 )
 from scipy import interpolate as interp
 
-import xarray as xr
 import numpy as np
+import xarray as xr
 import dask.array as da
-
 
 
 def run_fingerprinting(
@@ -23,29 +22,31 @@ def run_fingerprinting(
         baseyear,
 ):
 
-    grd_fp_dict = read_map_file(
-        grd_fp_map_file=grd_fingerprint_map_file
+    # Load the region -> fingerprint-file mapping, and all GMSL projection
+    # files into a single dataset with a (budget_term, source_region)
+    # MultiIndex 'combo' dimension.
+    grd_fp_dict = read_map_file(grd_fp_map_file=grd_fingerprint_map_file)
+    gmsl_ds = read_gmsl_projections(projection_files)
+    check_single_budget_term(
+        gmsl_ds.indexes["combo"].get_level_values("budget_term")
     )
-
-    #Organize projection netcdf files by regions from grd fp dict
-    matching_ncfiles_dict = process_ncfiles(projection_files, grd_fp_dict=grd_fp_dict)
 
     # Read location file
     (_, site_ids, site_lats, site_lons) = ReadLocationFile(location_file=location_file)
 
-    # Make dict of rsl projections
-    rsl_dict, targyears = scale_ncfiles_by_fingerprint(
-        matching_ncfiles_dict,
-        grdfingerprint_dict=grd_fp_dict,
+    # Make dict of rsl projections, keyed by budget_term
+    rsl_dict, targyears = scale_projections_by_fingerprint(
+        gmsl_ds=gmsl_ds,
+        grd_fp_dict=grd_fp_dict,
+        fingerprint_dir=fingerprint_dir,
         site_lats=site_lats,
         site_lons=site_lons,
         chunksize=chunksize,
-        fingerprint_dir=fingerprint_dir
     )
 
-    for ice_source, rsl in rsl_dict.items():
+    for budget_term, rsl in rsl_dict.items():
         if len(rsl):
-            print(ice_source)
+            print(budget_term)
             write_localized_projections(
                 rsl=rsl,
                 site_ids=site_ids,
@@ -53,103 +54,100 @@ def run_fingerprinting(
                 site_lons=site_lons,
                 scenario=scenario,
                 baseyear=baseyear,
-                ice_source=ice_source,
+                budget_term=budget_term,
                 targyears=targyears,
                 output_path=output_lslr_file
             )
 
-def process_ncfiles(ncfiles, grd_fp_dict):
-    
-    # Initialize the dictionary to store the matching netcdf files
-    matching_ncfiles_dict = {}
 
-    # Loop through the grdfingerprintfile
-    for ice_source, regions in grd_fp_dict.items():
-        for region, regionvars in regions.items():
-            # Initialize an empty list for this region
-            matching_ncfiles_dict[region] = []
+def check_single_budget_term(budget_terms):
+    # Each run localizes one budget term and writes it to --output-lslr-file;
+    # with more than one, each would overwrite the last.
+    found = sorted(set(budget_terms))
+    if len(found) > 1:
+        raise ValueError(
+            f"Projection files contain multiple budget terms {found}. "
+            "grd-fingerprinting must be run once per budget term."
+        )
 
-            # Loop through the ncfiles
-            for ncfile in ncfiles:
-                # Open the netcdf file
-                ds = xr.open_dataset(ncfile)
-                # Check if the 'region' global attribute matches the current region
-                if "region" in ds.attrs and ds.attrs["region"] == region:
-                    # If it matches, add the ncfile to the list for this region
-                    matching_ncfiles_dict[region].append(ncfile)
 
-                # Close the dataset
-                ds.close()
+def find_fingerprint_file(grd_fp_dict, source_region, fingerprint_dir):
+    # grd_fp_dict is nested budget_category -> source_region -> {"fingerprint": path}.
+    # Search across every category for a source_region key match; the yml's
+    # fingerprint paths are of the form "FPRINT/<file>.nc", so swap the
+    # "FPRINT" prefix for the actual --fingerprint-dir.
+    for regions in grd_fp_dict.values():
+        if source_region in regions:
+            return regions[source_region]["fingerprint"].replace("FPRINT", fingerprint_dir)
 
-    return matching_ncfiles_dict
+    return None
 
-def scale_ncfiles_by_fingerprint(
-    matching_ncfiles_dict,
-    grdfingerprint_dict,
+
+def scale_projections_by_fingerprint(
+    gmsl_ds,
+    grd_fp_dict,
+    fingerprint_dir,
     site_lats,
     site_lons,
     chunksize,
-    fingerprint_dir,
 ):
-    # Initialize the	 dictionary to store the scaled and summed netcdf files
-    scaled_ncfiles_dict = {}
+    # Initialize the dictionary to store the scaled and summed projections,
+    # accumulated per budget_term across all of its source_regions.
+    scaled_dict = {}
 
-    targyears = None
-    # Loop over all the ice sources in grdfingerprint_dict
-    for ice_source, regions in grdfingerprint_dict.items():
-        # Initialize an empty array for this ice source
-        scaled_ncfiles_dict[ice_source] = []
+    targyears = gmsl_ds["year"].values
 
-        # Loop over each region
-        for region, regionvars in regions.items():
-            # Check if there is a non-empty list of files in matching_ncfiles_dict
-            if region in matching_ncfiles_dict and matching_ncfiles_dict[region]:
-                # Load the fingerprint for that region
-                regionfp = da.array(
-                    AssignFP(
-                        regionvars["fingerprint"].replace("FPRINT", fingerprint_dir),
-                        site_lats,
-                        site_lons,
-                    )
-                )
-                regionfp = regionfp.rechunk(chunksize)
+    # Loop over every distinct (budget_term, source_region) pair present in
+    # the GMSL projections.
+    combos = sorted(set(gmsl_ds.indexes["combo"].tolist()))
+    for budget_term, source_region in combos:
+        # Look up this source_region's fingerprint file in the map; skip any
+        # source_region with no matching entry.
+        fp_filename = find_fingerprint_file(grd_fp_dict, source_region, fingerprint_dir)
+        if fp_filename is None:
+            raise ValueError(
+                f"Source region {source_region} in GMSL projections has no matching entry in the fingerprint map."
+            )
 
-                # Loop over the matching netcdf files
-                for ncfile in matching_ncfiles_dict[region]:
-                    print(region + ": " + ncfile)
+        print(source_region + ": " + budget_term + " -> " + fp_filename)
 
-                    # Load the netcdf file
-                    ds = xr.open_dataset(ncfile)
+        # Load the fingerprint for that region
+        regionfp = da.array(
+            AssignFP(
+                fp_filename,
+                site_lats,
+                site_lons,
+            )
+        )
+        regionfp = regionfp.rechunk(chunksize)
 
-                    # Initialize variable to hold the localized projections
-                    ## global should be locations=0, but Tamsin is currently using a different convention.
-                    samps = (
-                        ds["sea_level_change"]
-                        .isel(locations=-1)
-                        .transpose("samples", "years")
-                    )
+        # Select this budget_term/source_region's sea level change samples
+        samps = (
+            gmsl_ds["sea_level_change"]
+            .sel(combo=(budget_term, source_region))
+            .transpose("sample", "year")
+        )
 
-                    # Scale the netcdf file by the fingerprint
-                    # NOT SURE WHY NP CONVERSIONS HERE ARE NEEDED, IT WORKED IN OTHER MODULES WITHOUT
-                    local_sl = np.multiply.outer(samps.values, np.array(regionfp))
+        # Scale the projection by the fingerprint
+        # NOT SURE WHY NP CONVERSIONS HERE ARE NEEDED, IT WORKED IN OTHER MODULES WITHOUT
+        local_sl = np.multiply.outer(samps.values, np.array(regionfp))
 
-                    # Add the resulting scaled netcdf file to the array for this ice source
-                    if len(scaled_ncfiles_dict[ice_source]):
-                        scaled_ncfiles_dict[ice_source] += local_sl
-                    else:
-                        scaled_ncfiles_dict[ice_source] = local_sl
+        # Add the resulting scaled projection to the array for this
+        # budget_term, summing contributions across all of its source_regions.
+        if len(scaled_dict.setdefault(budget_term, [])):
+            scaled_dict[budget_term] += local_sl
+        else:
+            scaled_dict[budget_term] = local_sl
 
-                    targyears = ds["years"]
-
-                    # Close the dataset
-                    ds.close()
-
-    return scaled_ncfiles_dict, targyears
+    return scaled_dict, targyears
 
 def AssignFP(fp_filename, qlats, qlons):
-    ## Read in the fitted parameters from parfile
-    # Open the file
-    (fp, fp_lats, fp_lons) = readfp(fp_filename)
+    ## Open this region's fingerprint file directly
+    fp_ds = xr.open_dataset(fp_filename)
+    fp = fp_ds["fp"].transpose("lat", "lon").values
+    fp_lats = fp_ds["lat"].values
+    fp_lons = fp_ds["lon"].values
+    fp_ds.close()
 
     # Interpolate the fingerprint to these locations
     lat_sort = np.argsort(fp_lats)

@@ -18,19 +18,19 @@ from grd_fingerprinting.service import run_fingerprinting
     "--projection-files",
     multiple=True,
     required=True,
-    help="Paths to GMSL projection netcdfs to be converted to RSL",
+    help="Paths to GMSL projection netcdfs, each with 'budget_term' and 'source_region' dimensions, to be converted to RSL",
 )
 @click.option(
     "--grd-fingerprint-map-file",
     type=str,
     required=True,
-    help="Path to grd fingerprint region mapping file"
+    help="Path to the grd fingerprint region mapping yml. Each projection file's source_region is looked up in this file to find its matching fingerprint netcdf.",
 )
 @click.option(
     "--fingerprint-dir",
-    required=True,
     type=str,
-    help="Path to directory containing fingerprint netcdf files"
+    required=True,
+    help="Path to directory containing the fingerprint netcdf files referenced by --grd-fingerprint-map-file",
 )
 @click.option(
     "--output-lslr-file",
@@ -61,7 +61,7 @@ def main(
     baseyear
 ):
     click.echo("Hello from GRD Fingerprinting!")
-    
+
     run_fingerprinting(
         location_file=location_file,
         chunksize=chunksize,
